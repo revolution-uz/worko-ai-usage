@@ -44,4 +44,7 @@ $Settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit
 Register-ScheduledTask -TaskName "Worko AI Usage" -Action $Action -Trigger $Trigger -Settings $Settings -Description "Sync Claude Code and Codex usage with Worko HR" -Force | Out-Null
 
 Write-Host "Installed $Executable and enabled hourly sync."
-& $Executable login @args
+Write-Host ""
+Write-Host "Connect this computer to Worko HR with either command:"
+Write-Host "  $Executable login"
+Write-Host "  $Executable connect"
