@@ -64,21 +64,26 @@ jobs:
 
   scorecard:
     name: OpenSSF Scorecard
-    if: github.event_name != 'pull_request'
     permissions:
       contents: read
       security-events: write
       id-token: write
     runs-on: ubuntu-24.04
     steps:
+      - name: Acknowledge pull request check
+        if: github.event_name == 'pull_request'
+        run: echo "OpenSSF Scorecard runs after merge to the default branch"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        if: github.event_name != 'pull_request'
         with:
           persist-credentials: false
       - uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        if: github.event_name != 'pull_request'
         with:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
       - uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4
+        if: github.event_name != 'pull_request'
         with:
           sarif_file: results.sarif
