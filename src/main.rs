@@ -10,11 +10,13 @@ use std::{
     fs,
     io::{self, BufRead, Write},
     path::{Path, PathBuf},
+    process::Command as ProcessCommand,
     time::{Duration, SystemTime},
 };
 use walkdir::WalkDir;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
+const DEFAULT_BASE_URL: &str = "https://hr-platform.uz";
 
 #[derive(Parser)]
 #[command(version, about)]
@@ -26,11 +28,13 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Connect this computer to a Worko account
+    #[command(alias = "connect")]
     Login {
-        #[arg(long)]
+        #[arg(long, default_value = DEFAULT_BASE_URL)]
         url: Option<String>,
-        #[arg(long)]
-        email: Option<String>,
+        /// One-time token generated in Worko HR (omit to enter it securely)
+        #[arg(long, env = "WORKO_AI_USAGE_ONE_TIME_TOKEN", hide_env_values = true)]
+        token: Option<String>,
     },
     /// Scan local agent logs and upload hourly counters
     Sync,
@@ -69,7 +73,7 @@ fn main() {
 
 fn run() -> Result<()> {
     match Cli::parse().command {
-        Command::Login { url, email } => login(url, email),
+        Command::Login { url, token } => login(url, token),
         Command::Sync => sync(),
         Command::Status => {
             println!("{}", serde_json::to_string_pretty(&collect()?)?);
@@ -86,31 +90,95 @@ fn run() -> Result<()> {
     }
 }
 
-fn login(url: Option<String>, email: Option<String>) -> Result<()> {
-    let base_url = prompt_or(url, "Worko URL (for example https://hr.example.com): ")?
-        .trim_end_matches('/')
-        .to_owned();
-    let identifier = prompt_or(email, "Email or phone: ")?;
-    print!("Password: ");
-    io::stdout().flush()?;
-    let password = rpassword::read_password()?;
-    let response = client().post(format!("{base_url}/api/v1/auth/login"))
-        .json(&json!({"identifier": identifier, "password": password, "device_name": "worko-ai-usage"}))
-        .send().context("Worko server is unreachable")?;
-    if !response.status().is_success() {
-        bail!("login failed ({})", response.status());
+fn login(url: Option<String>, token: Option<String>) -> Result<()> {
+    let base_url = normalize_base_url(url.as_deref().unwrap_or(DEFAULT_BASE_URL))?;
+    let one_time_token = match token {
+        Some(token) => token,
+        None => {
+            let profile_url = format!("{base_url}/profile/integrations/ai-usage");
+            println!("Opening Worko HR to generate a one-time token:");
+            println!("{profile_url}");
+            if !open_in_browser(&profile_url) {
+                println!("Could not open a browser automatically. Open the link above manually.");
+            }
+            print!("One-time token: ");
+            io::stdout().flush()?;
+            rpassword::read_password()?
+        }
+    };
+    if one_time_token.trim().is_empty() {
+        bail!("one-time token cannot be empty");
+    }
+
+    let response = client()
+        .post(format!("{base_url}/api/v1/ai-agent-usage/auth/exchange"))
+        .json(&json!({
+            "one_time_token": one_time_token,
+            "device_name": hostname::get()?.to_string_lossy(),
+            "collector_version": VERSION,
+        }))
+        .send()
+        .context("Worko server is unreachable")?;
+    let status = response.status();
+    if !status.is_success() {
+        let message = response.json::<Value>().ok().and_then(|body| {
+            body.pointer("/message")
+                .or_else(|| body.pointer("/error/message"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        });
+        if let Some(message) = message {
+            bail!("one-time token exchange failed ({status}): {message}");
+        }
+        bail!("one-time token exchange failed ({status})");
     }
     let body: Value = response.json()?;
-    let token = body
-        .get("token")
+    let access_token = body
+        .pointer("/token")
+        .or_else(|| body.pointer("/access_token"))
+        .or_else(|| body.pointer("/data/token"))
+        .or_else(|| body.pointer("/data/access_token"))
         .and_then(Value::as_str)
-        .context("login response has no token")?;
+        .context("token exchange response has no access token")?;
     save_config(&Config {
         base_url,
-        token: token.to_owned(),
+        token: access_token.to_owned(),
     })?;
-    println!("Connected. Claude/Codex login credentials are never read or uploaded.");
+    println!("Connected. The one-time token has been exchanged and was not stored.");
     sync()
+}
+
+fn open_in_browser(url: &str) -> bool {
+    #[cfg(target_os = "macos")]
+    let result = ProcessCommand::new("open").arg(url).spawn();
+
+    #[cfg(target_os = "windows")]
+    let result = ProcessCommand::new("rundll32")
+        .arg("url.dll,FileProtocolHandler")
+        .arg(url)
+        .spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let result = ProcessCommand::new("xdg-open").arg(url).spawn();
+
+    #[cfg(not(any(unix, target_os = "windows")))]
+    let result: io::Result<std::process::Child> = Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "browser opening is not supported on this platform",
+    ));
+
+    result.is_ok()
+}
+
+fn normalize_base_url(value: &str) -> Result<String> {
+    let url = reqwest::Url::parse(value).context("Worko URL must be an absolute HTTPS URL")?;
+    if url.scheme() != "https" || url.host_str().is_none() {
+        bail!("Worko URL must be an absolute HTTPS URL");
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        bail!("Worko URL cannot contain a query or fragment");
+    }
+    Ok(value.trim_end_matches('/').to_owned())
 }
 
 fn sync() -> Result<()> {
@@ -313,17 +381,6 @@ fn save_config(config: &Config) -> Result<()> {
     Ok(())
 }
 
-fn prompt_or(value: Option<String>, label: &str) -> Result<String> {
-    if let Some(value) = value {
-        return Ok(value);
-    }
-    print!("{label}");
-    io::stdout().flush()?;
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-    Ok(input.trim().to_owned())
-}
-
 fn client() -> Client {
     Client::builder()
         .timeout(Duration::from_secs(20))
@@ -335,6 +392,28 @@ fn client() -> Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn connect_is_an_alias_for_login() {
+        let cli =
+            Cli::try_parse_from(["worko-ai-usage", "connect", "--token", "wot_test"]).unwrap();
+
+        assert!(matches!(cli.command, Command::Login { .. }));
+    }
+
+    #[test]
+    fn accepts_and_normalizes_https_base_url() {
+        assert_eq!(
+            normalize_base_url("https://hr-platform.uz/").unwrap(),
+            "https://hr-platform.uz"
+        );
+    }
+
+    #[test]
+    fn rejects_insecure_or_relative_base_url() {
+        assert!(normalize_base_url("http://hr-platform.uz").is_err());
+        assert!(normalize_base_url("hr-platform.uz").is_err());
+    }
 
     #[test]
     fn finds_codex_last_token_usage() {
