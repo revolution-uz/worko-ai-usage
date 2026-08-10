@@ -1,0 +1,7 @@
+[Unit]
+Description=Sync Claude Code and Codex usage with Worko HR
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=__EXECUTABLE__ sync
