@@ -68,4 +68,7 @@ elif command -v systemctl >/dev/null 2>&1; then
 fi
 
 echo "Installed ${TARGET} and enabled hourly sync."
-exec "${TARGET}" login "$@"
+echo
+echo "Connect this computer to Worko HR with either command:"
+echo "  ${TARGET} login"
+echo "  ${TARGET} connect"
