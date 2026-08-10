@@ -9,7 +9,7 @@ description = "Privacy-safe Claude Code and Codex usage collector for Worko HR"
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 dirs = "6"
 hex = "0.4"
 hostname = "0.4"
