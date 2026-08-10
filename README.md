@@ -32,7 +32,10 @@ For a different Worko deployment, pass its HTTPS URL:
 curl -fsSL https://github.com/revolution-uz/worko-ai-usage/releases/latest/download/install.sh | bash -s -- --url https://hr.example.com
 ```
 
-The installer detects Intel/Apple Silicon or x86_64/ARM64, installs to `~/.local/bin`, configures an hourly launchd/systemd job, and opens account login.
+The installer detects Intel/Apple Silicon or x86_64/ARM64, installs to
+`~/.local/bin`, and configures an hourly launchd/systemd job. It does not start
+login automatically; after installation, run `worko-ai-usage login` or
+`worko-ai-usage connect` when you are ready to connect the computer.
 
 ### Windows 10/11
 
@@ -42,7 +45,10 @@ Run PowerShell as the current user:
 irm https://github.com/revolution-uz/worko-ai-usage/releases/latest/download/install.ps1 | iex
 ```
 
-The installer detects x64/ARM64, installs under `%LOCALAPPDATA%\WorkoAiUsage`, adds it to the user PATH, configures a Task Scheduler job, and opens account login. Administrator access is not required.
+The installer detects x64/ARM64, installs under `%LOCALAPPDATA%\WorkoAiUsage`,
+adds it to the user PATH, and configures a Task Scheduler job. It does not start
+login automatically; run `worko-ai-usage login` or `worko-ai-usage connect`
+after installation. Administrator access is not required.
 
 ## Commands
 
