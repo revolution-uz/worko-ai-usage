@@ -58,7 +58,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/worko-ai-usage.exe" package/
           Compress-Archive -Path package/* -DestinationPath "worko-ai-usage-${{ matrix.target }}.zip"
       - name: Attest release archive
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: worko-ai-usage-${{ matrix.target }}.*
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -94,7 +94,7 @@ jobs:
         working-directory: dist
         run: sha256sum -- * > SHA256SUMS
       - name: Attest release manifest
-        uses: actions/attest-build-provenance@96b4a1ef7235a096b17240c259729fdd70c83d45 # v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: |
             dist/SHA256SUMS
