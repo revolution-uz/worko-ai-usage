@@ -54,12 +54,14 @@ struct Config {
 struct Snapshot {
     provider: String,
     machine_id: String,
+    session_hash: String,
     observed_at: String,
     input_tokens: u64,
     cached_input_tokens: u64,
     output_tokens: u64,
     sessions: u32,
     five_hour_percent: Option<f64>,
+    limit_source: Option<String>,
     collector_version: String,
     ide: String,
 }
@@ -190,14 +192,24 @@ fn sync() -> Result<()> {
         println!("No Claude Code or Codex usage events found.");
         return Ok(());
     }
-    let start = snapshots.len().saturating_sub(48);
+    let recent_cutoff = Utc::now() - chrono::Duration::hours(48);
+    let recent: Vec<&Snapshot> = snapshots
+        .iter()
+        .filter(|snapshot| {
+            DateTime::parse_from_rfc3339(&snapshot.observed_at)
+                .map(|time| time >= recent_cutoff)
+                .unwrap_or(false)
+        })
+        .rev()
+        .take(500)
+        .collect();
     let response = client()
         .post(format!(
             "{}/api/v1/ai-agent-usage/snapshots",
             config.base_url
         ))
         .bearer_auth(config.token)
-        .json(&json!({"snapshots": &snapshots[start..]}))
+        .json(&json!({"snapshots": recent.into_iter().rev().collect::<Vec<_>>()}))
         .send()?;
     if !response.status().is_success() {
         bail!("sync failed ({})", response.status());
@@ -220,13 +232,13 @@ fn collect() -> Result<Vec<Snapshot>> {
     ];
     let machine_id = machine_id(&home);
     let cutoff = SystemTime::now() - Duration::from_secs(7 * 86_400);
-    let mut buckets: BTreeMap<(String, String), Snapshot> = BTreeMap::new();
+    let mut buckets: BTreeMap<(String, String, String), Snapshot> = BTreeMap::new();
 
     for (provider, root) in sources {
         if !root.is_dir() {
             continue;
         }
-        for entry in WalkDir::new(root)
+        for entry in WalkDir::new(&root)
             .into_iter()
             .filter_map(|entry| entry.ok())
         {
@@ -240,6 +252,7 @@ fn collect() -> Result<Vec<Snapshot>> {
                 continue;
             }
             let fallback = DateTime::<Utc>::from(fs::metadata(path)?.modified()?);
+            let session_hash = session_hash(&machine_id, provider, path, &root);
             for line in io::BufReader::new(fs::File::open(path)?)
                 .lines()
                 .map_while(|line| line.ok())
@@ -262,16 +275,18 @@ fn collect() -> Result<Vec<Snapshot>> {
                     .with_nanosecond(0)
                     .unwrap()
                     .to_rfc3339();
-                let key = (provider.to_owned(), hour.clone());
+                let key = (provider.to_owned(), session_hash.clone(), hour.clone());
                 let bucket = buckets.entry(key).or_insert_with(|| Snapshot {
                     provider: provider.to_owned(),
                     machine_id: machine_id.clone(),
+                    session_hash: session_hash.clone(),
                     observed_at: hour,
                     input_tokens: 0,
                     cached_input_tokens: 0,
                     output_tokens: 0,
                     sessions: 0,
                     five_hour_percent: None,
+                    limit_source: None,
                     collector_version: VERSION.to_owned(),
                     ide: std::env::var("WORKO_IDE").unwrap_or_else(|_| "terminal".to_owned()),
                 });
@@ -282,11 +297,21 @@ fn collect() -> Result<Vec<Snapshot>> {
                 bucket.sessions += 1;
                 if let Some(percent) = find_percent(&event) {
                     bucket.five_hour_percent = Some(percent.clamp(0.0, 100.0));
+                    bucket.limit_source = Some("provider_log".to_owned());
                 }
             }
         }
     }
     Ok(buckets.into_values().collect())
+}
+
+fn session_hash(machine_id: &str, provider: &str, path: &Path, root: &Path) -> String {
+    let relative = path.strip_prefix(root).unwrap_or(path);
+    let mut hash = Sha256::new();
+    hash.update(machine_id.as_bytes());
+    hash.update(provider.as_bytes());
+    hash.update(relative.to_string_lossy().as_bytes());
+    hex::encode(hash.finalize())
 }
 
 fn find_usage(value: &Value) -> Option<&Value> {

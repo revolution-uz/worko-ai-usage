@@ -65,7 +65,7 @@ worko-ai-usage logout
   then exchanges a single-use token for a scoped Worko HR access token. The
   single-use token and your account password are never stored.
 - `status` prints locally detected counters and does not contact Worko.
-- `sync` uploads at most the latest 48 hourly snapshots.
+- `sync` uploads session-level snapshots from the latest 48 hours (up to 500 rows).
 - `logout` deletes the local Worko token and does not affect Claude or Codex login.
 
 ## Data collected
@@ -74,10 +74,17 @@ worko-ai-usage logout
 |---|---|
 | Provider (`claude`/`codex`) | Separate agent reporting |
 | Anonymous machine hash | Avoid duplicate hourly snapshots |
+| Anonymous session hash | Keep concurrent agent sessions separate without uploading paths |
 | UTC hour | Hourly reporting |
 | Input/cached/output token counts | Usage KPI |
 | Usage event count | Activity indicator |
 | Provider-reported 5-hour percentage | Included only when present in local provider logs |
+
+Five-hour utilization is never inferred from token counts. It remains unknown when
+the provider log does not expose a limit signal. Session separation improves
+attribution, but a provider may report an account-wide window value rather than a
+session-specific quota; the HR dashboard shows signal coverage so this limitation
+stays visible.
 
 ## Development and releases
 
